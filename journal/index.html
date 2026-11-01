@@ -293,8 +293,9 @@ var EKMIG = (function () {
   /* ---------- восстановление на новом адресе: один или несколько файлов ---------- */
   async function restore(cfg, files, onProg) {
     files = Array.prototype.slice.call(files.length != null ? files : [files]);
-    var list = [];
-    for (var f of files) { var h = (await readHead(f)).head; list.push({ f: f, h: h }); }
+    var list = [], skipped = [];
+    for (var f of files) { try { var h = (await readHead(f)).head; list.push({ f: f, h: h }); } catch (e) { skipped.push(f.name || 'файл'); } }
+    if (!list.length) throw new Error('Среди выбранных нет файлов переноса данных (.ekbak). Выберите файлы, сохранённые на странице переезда по старому адресу.');
     list.forEach(function (x) { if (x.h.app !== cfg.id) throw new Error('«' + (x.f.name || 'файл') + '» — от другого приложения («' + (x.h.title || x.h.app) + '»). Откройте его в нём.'); });
     var mains = list.filter(function (x) { return !x.h.kind || x.h.kind === 'main'; });
     if (mains.length > 1) throw new Error('Выбрано несколько основных файлов (файл 1). Выберите файлы только одной копии.');
@@ -315,7 +316,7 @@ var EKMIG = (function () {
     try { localStorage.setItem('ek-mig-asked', 'done'); } catch (e) {}
     var main0 = mains[0] && mains[0].h, miss = 0;
     if (main0 && main0.n > 1) { var got = {}; list.forEach(function (x) { if (x.h.sid === main0.sid) got[x.h.part] = 1; }); for (var j = 0; j < main0.n; j++) if (!got[j]) miss++; }
-    return { stats: stats, head: list[0].h, count: list.length, missing: miss, total: main0 ? main0.n : null };
+    return { stats: stats, head: list[0].h, count: list.length, missing: miss, total: main0 ? main0.n : null, skipped: skipped };
   }
 
   /* есть ли уже данные на этом адресе */
