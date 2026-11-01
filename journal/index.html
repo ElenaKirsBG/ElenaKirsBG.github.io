@@ -31,7 +31,7 @@ ol{padding-left:20px;margin:6px 0}li{margin:4px 0}label.ck{display:flex;gap:10px
 <div class="card step" id="s1"><div class="num">1</div><div><h2>Сохраните резервную копию — обязательно</h2>
 <div class="muted">Это страховка: файл со всеми вашими данными. Сохраните его в «Файлы», на диск или в «Загрузки».</div>
 <button class="btn main" id="prep">💾 Подготовить резервную копию</button>
-<button class="btn main hide" id="save"></button><div id="s1msg"></div></div></div>
+<div id="saveList"></div><div id="s1msg"></div></div></div>
 
 <div class="card step" id="s2"><div class="num">2</div><div><h2>Перенесите данные в новую версию</h2>
 <div id="autoBox"><div class="muted">Новая версия откроется в соседней вкладке, и данные перейдут туда сами.</div>
@@ -113,91 +113,127 @@ var EKMIG = (function () {
       r.onerror = function (e) { if (created) { if (e && e.preventDefault) e.preventDefault(); ok(null); } else no(r.error); };
     });
   }
-  function inGroup(cfg, store, excluded) {
-    return (cfg.groups || []).some(function (g) { return excluded.indexOf(g.label) >= 0 && g.stores.indexOf(store) >= 0; });
+  function groupOf(cfg, store) {
+    var g = (cfg.groups || []).filter(function (g) { return g.stores.indexOf(store) >= 0; })[0];
+    return g ? g.label : null;
   }
-  function dumpStore(db, name, bl, stats) {
+  /* читает хранилище целиком: описание + записи (Blob остаются ссылками, память не расходуется) */
+  function readStore(db, name) {
     return new Promise(function (ok, no) {
       var tx = db.transaction(name, 'readonly'), os = tx.objectStore(name);
-      var s = { name: name, keyPath: os.keyPath, ai: !!os.autoIncrement, ix: [], recs: [] };
-      for (var i = 0; i < os.indexNames.length; i++) { var x = os.index(os.indexNames[i]); s.ix.push({ name: x.name, keyPath: x.keyPath, unique: x.unique, multi: x.multiEntry }); }
-      var before = bl.length;
+      var meta = { name: name, keyPath: os.keyPath, ai: !!os.autoIncrement, ix: [] }, rows = [];
+      for (var i = 0; i < os.indexNames.length; i++) { var x = os.index(os.indexNames[i]); meta.ix.push({ name: x.name, keyPath: x.keyPath, unique: x.unique, multi: x.multiEntry }); }
       var c = os.openCursor();
-      c.onsuccess = function () {
-        var cur = c.result; if (!cur) return;
-        s.recs.push(s.keyPath == null ? [enc(cur.primaryKey, bl), enc(cur.value, bl)] : [null, enc(cur.value, bl)]);
-        cur.continue();
-      };
-      tx.oncomplete = function () { stats.records += s.recs.length; stats.files += bl.length - before; ok(s); };
+      c.onsuccess = function () { var cur = c.result; if (!cur) return; rows.push([meta.keyPath == null ? cur.primaryKey : null, cur.value]); cur.continue(); };
+      tx.oncomplete = function () { ok({ meta: meta, rows: rows }); };
       tx.onerror = function () { no(tx.error); };
     });
   }
-  /* размеры групп (аудиокниги, видео), чтобы предложить их не включать */
+  function blobBytes(v) { var bl = []; enc(v, bl); var n = 0; bl.forEach(function (b) { n += b.size; }); return { bytes: n, files: bl.length }; }
+
+  /* размеры групп (аудиокниги, видео) — для галочек на странице переезда */
   async function groupSizes(cfg) {
     var out = {};
-    for (var g of (cfg.groups || [])) {
-      var bytes = 0, n = 0;
-      for (var dn of cfg.dbs) {
-        var db = await openExisting(dn); if (!db) continue;
-        for (var st of g.stores) {
-          if (!db.objectStoreNames.contains(st)) continue;
-          var bl = [], s = await dumpStore(db, st, bl, { records: 0, files: 0 });
-          n += s.recs.length; bl.forEach(function (b) { bytes += b.size; });
-        }
-        db.close();
+    for (var dn of cfg.dbs) {
+      var db = await openExisting(dn); if (!db) continue;
+      for (var name of Array.prototype.slice.call(db.objectStoreNames)) {
+        var g = groupOf(cfg, name); if (!g) continue;
+        var st = await readStore(db, name), o = out[g] || (out[g] = { bytes: 0, records: 0 });
+        st.rows.forEach(function (r) { o.bytes += blobBytes(r[1]).bytes; }); o.records += st.rows.length;
       }
-      if (n) out[g.label] = { bytes: bytes, records: n };
+      db.close();
     }
+    Object.keys(out).forEach(function (k) { if (!out[k].records) delete out[k]; });
     return out;
   }
 
-  /* ---------- localStorage этого приложения ---------- */
-  function ownKey(cfg, k) {
-    return (cfg.ls.keys || []).indexOf(k) >= 0 || (cfg.ls.prefixes || []).some(function (p) { return k.indexOf(p) === 0; });
-  }
   function lsKeys(cfg) {
     var out = [];
     try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && ownKey(cfg, k)) out.push(k); } } catch (e) {}
     return out;
   }
+  function ownKey(cfg, k) {
+    return (cfg.ls.keys || []).indexOf(k) >= 0 || (cfg.ls.prefixes || []).some(function (p) { return k.indexOf(p) === 0; });
+  }
+  function pack(head, bl) {
+    var off = 0;
+    head.blobs = bl.map(function (b) { var e = { o: off, n: b.size }; off += b.size; return e; });
+    var hs = new TextEncoder().encode(JSON.stringify(head));
+    var len = String(hs.length); while (len.length < 12) len = '0' + len;
+    return new Blob([MAGIC, len, '\n', hs].concat(bl), { type: 'application/octet-stream' });
+  }
 
-  /* ---------- сбор всех данных приложения в один файл ---------- */
-  async function dump(cfg, excluded, onProg) {
-    excluded = excluded || [];
-    var bl = [], stats = { records: 0, files: 0, bytes: 0, ls: 0 };
-    var head = { magic: 'EKBAK1', app: cfg.id, title: cfg.title, date: new Date().toISOString(), from: location.origin + location.pathname, ls: {}, dbs: [], excluded: excluded };
-    lsKeys(cfg).forEach(function (k) { head.ls[k] = localStorage.getItem(k); stats.ls++; });
+  /* ---------- сбор данных приложения: один или несколько файлов не больше LIMIT ----------
+     Файл 1 — «основной»: настройки и описание всех хранилищ (при загрузке очищает их).
+     Остальные — продолжение: только добавляют записи. Большие объёмы (аудио, видео) не
+     собираются в один гигантский файл — iPhone с таким не справляется. */
+  var LIMIT = 200 * 1048576;
+  async function dump(cfg, excluded, onProg, limit) {
+    excluded = excluded || []; limit = limit || cfg.partLimit || LIMIT;
+    var sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    var stats = { records: 0, files: 0, bytes: 0, ls: 0 };
+    var base = { magic: 'EKBAK1', app: cfg.id, title: cfg.title, date: new Date().toISOString(), from: location.origin + location.pathname, sid: sid };
+    var ls = {}; lsKeys(cfg).forEach(function (k) { ls[k] = localStorage.getItem(k); stats.ls++; });
+    var dbMeta = [], queue = [];   // queue: {db, version, store, key, value, bytes, grp}
     for (var dn of cfg.dbs) {
       var db = await openExisting(dn); if (!db) continue;
       var d = { name: dn, version: db.version, stores: [] };
-      var names = Array.prototype.slice.call(db.objectStoreNames);
-      for (var i = 0; i < names.length; i++) {
-        if (onProg) onProg('Собираю данные: ' + names[i] + '…');
-        if (inGroup(cfg, names[i], excluded)) { d.stores.push({ name: names[i], skip: true, keyPath: null, ai: false, ix: [], recs: [] }); continue; }
-        d.stores.push(await dumpStore(db, names[i], bl, stats));
+      for (var name of Array.prototype.slice.call(db.objectStoreNames)) {
+        var g = groupOf(cfg, name);
+        if (g && excluded.indexOf(g) >= 0) { d.stores.push({ name: name, skip: true, keyPath: null, ai: false, ix: [] }); continue; }
+        if (onProg) onProg('Собираю данные: ' + name + '…');
+        var st = await readStore(db, name); d.stores.push(st.meta);
+        st.rows.forEach(function (r) { var b = blobBytes(r[1]); stats.records++; stats.files += b.files; stats.bytes += b.bytes;
+          queue.push({ db: dn, store: name, key: r[0], value: r[1], bytes: b.bytes + 300, grp: g || '' }); });
       }
-      db.close(); head.dbs.push(d);
+      db.close(); dbMeta.push(d);
     }
-    var off = 0;
-    head.blobs = bl.map(function (b) { var e = { o: off, n: b.size }; off += b.size; return e; });
-    stats.bytes = off;
-    head.stats = stats;
-    var hs = new TextEncoder().encode(JSON.stringify(head));
-    var len = String(hs.length); while (len.length < 12) len = '0' + len;
-    var file = new Blob([MAGIC, len, '\n', hs].concat(bl), { type: 'application/octet-stream' });
-    stats.bytes = file.size;
-    return { blob: file, stats: stats, empty: stats.records === 0 && stats.ls === 0 };
+    queue.sort(function (a, b) { return (a.grp ? 1 : 0) - (b.grp ? 1 : 0); }); // сначала обычные данные, потом медиа
+    var parts = [], cur = null;
+    function flush() {
+      if (!cur) return;
+      parts.push(cur); cur = null;
+    }
+    function start(label) {
+      var i = parts.length;
+      cur = { i: i, bl: [], bytes: 0, n: 0, label: label, dbs: i === 0 ? dbMeta.map(function (d) { return { name: d.name, version: d.version, stores: d.stores.map(function (s) { return Object.assign({}, s, { recs: [] }); }) }; }) : [] };
+    }
+    function target(q) {
+      var d = cur.dbs.filter(function (x) { return x.name === q.db; })[0];
+      if (!d) { var m = dbMeta.filter(function (x) { return x.name === q.db; })[0]; d = { name: q.db, version: m.version, stores: [] }; cur.dbs.push(d); }
+      var s = d.stores.filter(function (x) { return x.name === q.store; })[0];
+      if (!s) { var mm = dbMeta.filter(function (x) { return x.name === q.db; })[0].stores.filter(function (x) { return x.name === q.store; })[0]; s = Object.assign({}, mm, { recs: [] }); d.stores.push(s); }
+      return s;
+    }
+    start('основные данные');
+    queue.forEach(function (q) {
+      if (cur.n && cur.bytes + q.bytes > limit) { flush(); start(q.grp ? q.grp.toLowerCase() : 'данные'); }
+      if (cur.i > 0 && q.grp && cur.label !== q.grp.toLowerCase() && cur.n) { flush(); start(q.grp.toLowerCase()); }
+      if (cur.i > 0 && !cur.n) cur.label = q.grp ? q.grp.toLowerCase() : 'данные';
+      var s = target(q);
+      s.recs.push(s.keyPath == null ? [enc(q.key, cur.bl), enc(q.value, cur.bl)] : [null, enc(q.value, cur.bl)]);
+      cur.bytes += q.bytes; cur.n++;
+    });
+    flush();
+    parts = parts.map(function (c) {
+      var head = Object.assign({}, base, { part: c.i, n: parts.length, kind: c.i === 0 ? 'main' : 'more', label: c.label, dbs: c.dbs, ls: c.i === 0 ? ls : null });
+      return { blob: pack(head, c.bl), label: c.label, records: c.n, i: c.i, n: parts.length };
+    });
+    var total = 0; parts.forEach(function (p) { total += p.blob.size; }); stats.bytes = total;
+    return { parts: parts, blob: parts[0].blob, stats: stats, empty: stats.records === 0 && stats.ls === 0 };
   }
 
   function blobText(b) { return b.text ? b.text() : new Response(b).text(); }
   function blobBuf(b) { return b.arrayBuffer ? b.arrayBuffer() : new Response(b).arrayBuffer(); }
 
-  async function parse(file) {
+  async function readHead(file) {
     var top = await blobText(file.slice(0, 20));
-    if (top.slice(0, 7) !== MAGIC) throw new Error('Это не файл переноса данных (.ekbak). Обычную резервную копию загрузите в самом приложении: в настройках, раздел «Резервная копия».');
+    if (top.slice(0, 7) !== MAGIC) throw new Error('«' + (file.name || 'файл') + '» — это не файл переноса данных (.ekbak). Обычную резервную копию загрузите в самом приложении: в настройках, раздел «Резервная копия».');
     var len = parseInt(top.slice(7, 19), 10);
-    var head = JSON.parse(await blobText(file.slice(20, 20 + len)));
-    var base = 20 + len;
+    return { head: JSON.parse(await blobText(file.slice(20, 20 + len))), base: 20 + len };
+  }
+  async function parse(file) {
+    var h = await readHead(file), head = h.head, base = h.base;
     var B = { buf: {}, blob: function (i, t) { var e = head.blobs[i]; return file.slice(base + e.o, base + e.o + e.n, t || ''); } };
     var need = new Set(); head.dbs.forEach(function (d) { d.stores.forEach(function (s) { needBufs(s.recs, need); }); });
     for (var i of need) B.buf[i] = await blobBuf(B.blob(i));
@@ -228,33 +264,58 @@ var EKMIG = (function () {
   }
   function txDone(tx) { return new Promise(function (ok, no) { tx.oncomplete = ok; tx.onerror = function () { no(tx.error); }; tx.onabort = function () { no(tx.error || new Error('Недостаточно места на устройстве')); }; }); }
 
-  /* ---------- восстановление на новом адресе ---------- */
-  async function restore(cfg, file, onProg) {
-    var p = await parse(file), head = p.head;
-    if (head.app !== cfg.id) throw new Error('Этот файл — от другого приложения («' + (head.title || head.app) + '»). Откройте его в нём.');
-    try { navigator.storage && navigator.storage.persist && await navigator.storage.persist(); } catch (e) {}
-    var stats = { records: 0, files: 0 };
+  async function restoreOne(cfg, file, onProg) {
+    var p = await parse(file), head = p.head, main = !head.kind || head.kind === 'main';
+    var stats = { records: 0, files: head.blobs.length };
     for (var d of head.dbs) {
       var db = await openForRestore(d);
       for (var s of d.stores) {
         if (s.skip) continue;
-        if (onProg) onProg('Записываю: ' + s.name + '…');
-        var tx = db.transaction(s.name, 'readwrite'); tx.objectStore(s.name).clear(); await txDone(tx);
-        for (var i = 0; i < s.recs.length; i += 200) {
-          tx = db.transaction(s.name, 'readwrite'); var os = tx.objectStore(s.name);
-          s.recs.slice(i, i + 200).forEach(function (r) { var v = dec(r[1], p.B); if (r[0] === null) os.put(v); else os.put(v, dec(r[0], p.B)); });
+        if (main) { var tx0 = db.transaction(s.name, 'readwrite'); tx0.objectStore(s.name).clear(); await txDone(tx0); }
+        for (var i = 0; i < s.recs.length; i += 100) {
+          var tx = db.transaction(s.name, 'readwrite'), os = tx.objectStore(s.name);
+          s.recs.slice(i, i + 100).forEach(function (r) { var v = dec(r[1], p.B); if (r[0] === null) os.put(v); else os.put(v, dec(r[0], p.B)); });
           await txDone(tx);
-          if (onProg && s.recs.length > 200) onProg('Записываю: ' + s.name + ' — ' + Math.min(i + 200, s.recs.length) + ' из ' + s.recs.length);
+          if (onProg && s.recs.length > 100) onProg(Math.min(i + 100, s.recs.length) + ' из ' + s.recs.length);
         }
         stats.records += s.recs.length;
       }
       db.close();
     }
-    lsKeys(cfg).forEach(function (k) { if (!(k in head.ls)) localStorage.removeItem(k); });
-    Object.keys(head.ls).forEach(function (k) { try { localStorage.setItem(k, head.ls[k]); } catch (e) {} });
-    stats.files = head.blobs.length;
+    if (main && head.ls) {
+      lsKeys(cfg).forEach(function (k) { if (!(k in head.ls)) localStorage.removeItem(k); });
+      Object.keys(head.ls).forEach(function (k) { try { localStorage.setItem(k, head.ls[k]); } catch (e) {} });
+      try { localStorage.setItem('ek-mig-sid', head.sid || ''); } catch (e) {}
+    }
+    return stats;
+  }
+
+  /* ---------- восстановление на новом адресе: один или несколько файлов ---------- */
+  async function restore(cfg, files, onProg) {
+    files = Array.prototype.slice.call(files.length != null ? files : [files]);
+    var list = [];
+    for (var f of files) { var h = (await readHead(f)).head; list.push({ f: f, h: h }); }
+    list.forEach(function (x) { if (x.h.app !== cfg.id) throw new Error('«' + (x.f.name || 'файл') + '» — от другого приложения («' + (x.h.title || x.h.app) + '»). Откройте его в нём.'); });
+    var mains = list.filter(function (x) { return !x.h.kind || x.h.kind === 'main'; });
+    if (mains.length > 1) throw new Error('Выбрано несколько основных файлов (файл 1). Выберите файлы только одной копии.');
+    var sid = mains.length ? mains[0].h.sid : null;
+    var done = ''; try { done = localStorage.getItem('ek-mig-sid') || ''; } catch (e) {}
+    list.forEach(function (x) {
+      if (x.h.kind === 'more' && x.h.sid !== sid && x.h.sid !== done) throw new Error('Файл «' + (x.f.name || '') + '» — часть другой копии или загружен без файла 1. Выберите вместе с ним файл 1 той же копии.');
+    });
+    try { navigator.storage && navigator.storage.persist && await navigator.storage.persist(); } catch (e) {}
+    list.sort(function (a, b) { return (a.h.part || 0) - (b.h.part || 0); });
+    var stats = { records: 0, files: 0 };
+    for (var i = 0; i < list.length; i++) {
+      var pre = list.length > 1 ? 'Файл ' + (i + 1) + ' из ' + list.length + ': ' : '';
+      if (onProg) onProg(pre + 'записываю…');
+      var s = await restoreOne(cfg, list[i].f, function (t) { if (onProg) onProg(pre + t); });
+      stats.records += s.records; stats.files += s.files;
+    }
     try { localStorage.setItem('ek-mig-asked', 'done'); } catch (e) {}
-    return { stats: stats, head: head };
+    var main0 = mains[0] && mains[0].h, miss = 0;
+    if (main0 && main0.n > 1) { var got = {}; list.forEach(function (x) { if (x.h.sid === main0.sid) got[x.h.part] = 1; }); for (var j = 0; j < main0.n; j++) if (!got[j]) miss++; }
+    return { stats: stats, head: list[0].h, count: list.length, missing: miss, total: main0 ? main0.n : null };
   }
 
   /* есть ли уже данные на этом адресе */
@@ -303,24 +364,24 @@ function installHTML(url){
 }
 
 var CFG={"id": "journal", "title": "Журнал сделок", "oldUrl": "https://elenakirsbg.github.io/journal/", "newUrl": "https://journal.elenakirsanova.com/", "ls": {"prefixes": ["tj.", "tj-", "journal."], "keys": []}, "dbs": ["trade-journal"], "groups": []}, NEW_ORIGIN=new URL(CFG.newUrl).origin, $=function(i){return document.getElementById(i)};
-var prepared=null, prepKey='', sending=false, done=false, savedOnce=false;
+var prepared=null, prepKey='', sending=false, done=false, savedOnce=false, saved={};
 /* старый офлайн-модуль больше не нужен: отключаем его только для этого приложения (данные не трогаем) */
 try{navigator.serviceWorker&&navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){if(r.scope===new URL('./',location.href).href)r.unregister()})})}catch(e){}
 function excluded(){return Array.prototype.slice.call(document.querySelectorAll('#groups input')).filter(function(x){return !x.checked}).map(function(x){return x.value})}
 async function getData(){var k=excluded().join('|');if(!prepared||prepKey!==k){prepared=await EKMIG.dump(CFG,excluded());prepKey=k}return prepared}
-function fname(){return 'perenos-'+CFG.id+'-'+new Date().toISOString().slice(0,10)+'.ekbak'}
+function fname(p){return 'perenos-'+CFG.id+'-'+new Date().toISOString().slice(0,10)+(p&&p.n>1?'-fayl-'+(p.i+1)+'-iz-'+p.n:'')+'.ekbak'}
 function setMsg(id,cls,html){$(id).innerHTML=html?'<div class="'+cls+'">'+html+'</div>':''}
 $('inst').innerHTML=installHTML(CFG.newUrl.replace(/^https?:\/\//,''));$('inst2').innerHTML=$('inst').innerHTML;
 if(EKMIG.env.ios){$('autoBox').classList.add('hide');$('fileBox').classList.remove('hide');
-  $('fileTxt').innerHTML='На iPhone и iPad данные переносятся через файл копии из шага 1:<ol><li>Установите новую версию (шаг 3) и откройте её с новой иконки.</li><li>Нажмите <b>«Перенести данные»</b> → <b>«Загрузить файл копии»</b> и выберите сохранённый файл.</li></ol>';
+  $('fileTxt').innerHTML='На iPhone и iPad данные переносятся через файлы копии из шага 1:<ol><li>Установите новую версию (шаг 3) и откройте её с новой иконки.</li><li>Нажмите <b>«Перенести данные»</b> → <b>«Загрузить файлы копии»</b>. В «Файлах» нажмите <b>«Выбрать»</b>, отметьте <b>все</b> сохранённые файлы копии и нажмите «Открыть».</li></ol>';
   $('openNew').removeAttribute('target');}
 
 (async function(){
   try{
     var gs=await EKMIG.groupSizes(CFG), gh='';
-    Object.keys(gs).forEach(function(l){var g=gs[l];gh+='<label class="ck"><input type="checkbox" value="'+l+'"'+(g.bytes>1.5e9?'':' checked')+'><span>Перенести '+l.toLowerCase()+' ('+EKMIG.fmtSize(g.bytes)+')'+(g.bytes>1.5e9?' — очень большой объём, файл может не поместиться':'')+'</span></label>'});
+    Object.keys(gs).forEach(function(l){var g=gs[l];gh+='<label class="ck"><input type="checkbox" value="'+l+'" checked><span>Перенести '+l.toLowerCase()+' ('+EKMIG.fmtSize(g.bytes)+')</span></label>'});
     $('groups').innerHTML=gh;
-    document.querySelectorAll('#groups input').forEach(function(x){x.onchange=function(){prepared=null;summary()}});
+    document.querySelectorAll('#groups input').forEach(function(x){x.onchange=function(){prepared=null;saved={};savedOnce=false;$('saveList').innerHTML='';$('s1msg').innerHTML='';$('s1').classList.remove('done');$('auto').disabled=true;var b=$('prep');b.classList.remove('hide');b.disabled=false;b.textContent='💾 Подготовить резервную копию';summary()}});
     await summary();
   }catch(e){$('found').innerHTML='<div class="err">Не удалось прочитать данные: '+(e&&e.message||e)+'</div>'}
   if(location.hash==='#ek-send'&&window.opener){$('sendBox').classList.remove('hide');$('main').classList.add('hide');pingOpener()}
@@ -333,15 +394,25 @@ async function summary(){
 }
 $('prep').onclick=async function(){
   var b=this;b.disabled=true;b.textContent='Готовлю копию…';
-  try{var d=await getData();b.classList.add('hide');var s=$('save');s.classList.remove('hide');s.textContent='💾 Сохранить файл копии ('+EKMIG.fmtSize(d.blob.size)+')';}
+  try{var d=await getData();b.classList.add('hide');renderSave(d)}
   catch(e){b.disabled=false;b.textContent='💾 Подготовить резервную копию';setMsg('s1msg','err','Не получилось: '+(e&&e.message||e))}
 };
-$('save').onclick=async function(){
-  var d=await getData(),r=await EKMIG.saveFile(d.blob,fname());
-  if(r==='cancel'){setMsg('s1msg','warn','Файл не сохранён. Нажмите кнопку ещё раз и выберите <b>«Сохранить в Файлы»</b>.');return}
-  savedOnce=true;$('s1').classList.add('done');$('auto').disabled=false;
-  setMsg('s1msg','ok','✓ Файл <b>'+fname()+'</b> сохранён'+(r==='download'?' в «Загрузки»':'')+'. Сохранить ещё раз можно этой же кнопкой.');
-};
+function renderSave(d){
+  var h='';
+  if(d.parts.length>1)h+='<div class="muted small" style="margin-top:8px">Данных много, поэтому копия разделена на <b>'+d.parts.length+' файлов</b> — сохраните каждый'+(EKMIG.env.ios?' (в окне «Поделиться» выберите <b>«Сохранить в Файлы»</b> и одну и ту же папку)':'')+'.</div>';
+  d.parts.forEach(function(p,i){h+='<button class="btn '+(saved[i]?'soft':'main')+'" data-i="'+i+'">'+(saved[i]?'✓ ':'💾 ')+(d.parts.length>1?'Файл '+(i+1)+' из '+d.parts.length+' — '+p.label:'Сохранить файл копии')+' ('+EKMIG.fmtSize(p.blob.size)+')'+'</button>'});
+  $('saveList').innerHTML=h;
+  $('saveList').querySelectorAll('button').forEach(function(btn){btn.onclick=async function(){
+    var i=+btn.dataset.i,p=d.parts[i],r;
+    try{r=await EKMIG.saveFile(p.blob,fname(p))}catch(e){setMsg('s1msg','err','Не получилось сохранить: '+(e&&e.message||e));return}
+    if(r==='cancel'){setMsg('s1msg','warn','Файл не сохранён. Нажмите кнопку ещё раз и выберите <b>«Сохранить в Файлы»</b>.');return}
+    saved[i]=1;renderSave(d);
+    var left=d.parts.length-Object.keys(saved).length;
+    if(left>0){setMsg('s1msg','muted','Сохранено '+Object.keys(saved).length+' из '+d.parts.length+'. Осталось '+left+'.');return}
+    savedOnce=true;$('s1').classList.add('done');$('auto').disabled=false;
+    setMsg('s1msg','ok','✓ Резервная копия сохранена'+(r==='download'?' в «Загрузки»':'')+(d.parts.length>1?': все '+d.parts.length+' файлов':'')+'. Повторно сохранить можно теми же кнопками.');
+  }});
+}
 function pingTo(w,ms){var t0=Date.now(),iv=setInterval(function(){if(done||Date.now()-t0>ms){clearInterval(iv);if(!done)onTimeout();return}try{w&&w.postMessage({ek:'hello',app:CFG.id},NEW_ORIGIN)}catch(e){}},700)}
 function pingOpener(){pingTo(window.opener,30000)}
 var timeoutCb=null;function onTimeout(){if(timeoutCb)timeoutCb()}
@@ -349,14 +420,14 @@ $('auto').onclick=function(){
   if(!savedOnce){setMsg('s2msg','warn','Сначала сохраните резервную копию (шаг 1).');return}
   setMsg('s2msg','muted','Открываю новую версию и передаю данные… Не закрывайте это окно.');
   var w=window.open(CFG.newUrl+'migrate.html#ek-auto','_blank');
-  timeoutCb=function(){setMsg('s2msg','warn','Автоматически не получилось — так бывает, если приложение было установлено отдельной иконкой. Ничего страшного: установите новую версию (шаг 3), откройте её, нажмите <b>«Перенести данные» → «Загрузить файл копии»</b> и выберите файл из шага 1.')};
+  timeoutCb=function(){setMsg('s2msg','warn','Автоматически не получилось — так бывает, если приложение было установлено отдельной иконкой. Ничего страшного: установите новую версию (шаг 3), откройте её, нажмите <b>«Перенести данные» → «Загрузить файлы копии»</b> и выберите все файлы из шага 1.')};
   pingTo(w,30000);
 };
 window.addEventListener('message',async function(e){
   if(e.origin!==NEW_ORIGIN||!e.data||e.data.app!==CFG.id)return;
   if(e.data.ek==='ready'){
     if(sending||done)return;sending=true;
-    try{var d=await getData();e.source.postMessage(d.empty?{ek:'nodata',app:CFG.id}:{ek:'data',app:CFG.id,blob:d.blob},NEW_ORIGIN);$('sendMsg').textContent='Данные отправлены, новая версия их записывает…'}
+    try{var d=await getData();e.source.postMessage(d.empty?{ek:'nodata',app:CFG.id}:{ek:'data',app:CFG.id,blobs:d.parts.map(function(p){return p.blob})},NEW_ORIGIN);$('sendMsg').textContent='Данные отправлены, новая версия их записывает…'}
     catch(x){sending=false;$('sendMsg').innerHTML='<div class="err">Ошибка: '+(x&&x.message||x)+'</div>'}
   }else if(e.data.ek==='done'){
     done=true;$('s2').classList.add('done');
