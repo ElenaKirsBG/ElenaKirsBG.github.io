@@ -1,0 +1,368 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex"><meta name="theme-color" content="#2f6f8f">
+<title>Покупки — новый адрес</title><link rel="apple-touch-icon" href="icon.png">
+<style>:root{--c:#2f6f8f;--bg:#eef4f7}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:#1d232b}
+.wrap{max-width:560px;margin:0 auto;padding:22px 16px 40px}
+.top{display:flex;gap:14px;align-items:center;margin-bottom:14px}.top img{width:56px;height:56px;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+h1{font-size:22px;line-height:1.25;margin:0}h2{font-size:17px;margin:0 0 6px}
+.card{background:#fff;border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.muted{color:#5d6672;font-size:14px}.addr{font-weight:700;color:var(--c);word-break:break-all}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:14px 16px;font-family:inherit;font-weight:600;font-size:16px;line-height:1.2;cursor:pointer;margin-top:10px;text-align:center;text-decoration:none}
+.btn.main{background:var(--c);color:#fff}.btn.soft{background:#eef0f3;color:#1d232b}.btn:disabled{opacity:.45;cursor:default}
+.step{display:flex;gap:12px}.num{flex:0 0 30px;height:30px;border-radius:50%;background:var(--c);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step.done .num{background:#2e8b57}.step>div:last-child{flex:1;min-width:0}
+.ok{background:#e7f5ec;color:#1f6b3d;border-radius:12px;padding:12px;margin-top:10px}
+.err{background:#fdecec;color:#9b2222;border-radius:12px;padding:12px;margin-top:10px}
+.warn{background:#fff6e0;color:#6b4b00;border-radius:12px;padding:12px;margin-top:10px}
+ol{padding-left:20px;margin:6px 0}li{margin:4px 0}label.ck{display:flex;gap:10px;align-items:flex-start;margin-top:8px;font-size:15px}label.ck input{width:20px;height:20px;margin-top:2px}
+.hide{display:none!important}.small{font-size:13px}a{color:var(--c)}
+</style></head><body><div class="wrap">
+<div class="top"><img src="icon.png" alt=""><div><h1>«Список покупок и учёт расходов» переехал на новый адрес</h1><div class="muted">Новый адрес: <a class="addr" href="https://shop.elenakirsanova.com/">shop.elenakirsanova.com</a></div></div></div>
+
+<div class="card hide" id="sendBox"><h2>Передаём данные в новую версию…</h2><div id="sendMsg" class="muted">Не закрывайте это окно.</div></div>
+
+<div id="main">
+<div class="card"><div id="found" class="muted">Проверяю, какие данные хранятся на этом устройстве…</div><div id="groups"></div></div>
+
+<div id="steps" class="hide">
+<div class="card step" id="s1"><div class="num">1</div><div><h2>Сохраните резервную копию — обязательно</h2>
+<div class="muted">Это страховка: файл со всеми вашими данными. Сохраните его в «Файлы», на диск или в «Загрузки».</div>
+<button class="btn main" id="prep">💾 Подготовить резервную копию</button>
+<button class="btn main hide" id="save"></button><div id="s1msg"></div></div></div>
+
+<div class="card step" id="s2"><div class="num">2</div><div><h2>Перенесите данные в новую версию</h2>
+<div id="autoBox"><div class="muted">Новая версия откроется в соседней вкладке, и данные перейдут туда сами.</div>
+<button class="btn main" id="auto" disabled>🔄 Перенести автоматически</button></div>
+<div id="fileBox" class="hide"><div class="muted" id="fileTxt"></div></div>
+<div id="s2msg"></div></div></div>
+
+<div class="card step" id="s3"><div class="num">3</div><div><h2>Установите новую версию</h2><div id="inst"></div>
+<a class="btn soft" id="openNew" href="https://shop.elenakirsanova.com/" target="_blank" rel="opener">Открыть новый адрес</a>
+<div class="muted small" style="margin-top:10px">Старую иконку удалите, когда убедитесь, что в новой версии всё на месте. Резервную копию сохраните на всякий случай.</div></div></div>
+</div>
+
+<div class="card hide" id="emptyBox"><h2>Данных не найдено</h2><div class="muted">На этом устройстве (в этом браузере) старая версия ничего не хранит. Просто установите новую:</div><div id="inst2"></div>
+<a class="btn main" href="https://shop.elenakirsanova.com/">Открыть новый адрес</a></div>
+</div>
+<p class="muted small" style="text-align:center;margin-top:20px">© Елена Кирсанова · <a href="https://elenakirsanova.com/apps/">elenakirsanova.com/apps</a></p>
+</div>
+<script>/* Перенос данных приложений Елены Кирсановой со старого адреса на новый.
+   © 2026 Елена Кирсанова. Все права защищены.
+   Всё происходит только на устройстве пользователя: данные никуда не отправляются,
+   кроме нового адреса того же приложения в этом же браузере. */
+var EKMIG = (function () {
+  'use strict';
+  var MAGIC = 'EKBAK1\n', M = '\u0001';
+
+  /* ---------- кодирование значений (Blob, Date, ArrayBuffer…) ---------- */
+  function enc(v, bl) {
+    if (v === undefined) return { [M]: 'u' };
+    if (v === null || typeof v !== 'object') {
+      if (typeof v === 'number' && !isFinite(v)) return { [M]: 'n', v: String(v) };
+      if (typeof v === 'bigint') return { [M]: 'g', v: String(v) };
+      return v;
+    }
+    if (typeof Blob !== 'undefined' && v instanceof Blob) {
+      var o = { [M]: 'b', i: bl.push(v) - 1, t: v.type || '' };
+      if (typeof File !== 'undefined' && v instanceof File) { o.f = v.name; o.m = v.lastModified; }
+      return o;
+    }
+    if (v instanceof ArrayBuffer) return { [M]: 'a', i: bl.push(new Blob([v])) - 1 };
+    if (ArrayBuffer.isView(v)) return { [M]: 'v', k: v.constructor.name, i: bl.push(new Blob([v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)])) - 1 };
+    if (v instanceof Date) return { [M]: 'd', v: v.getTime() };
+    if (v instanceof Map) return { [M]: 'M', v: Array.from(v).map(function (e) { return [enc(e[0], bl), enc(e[1], bl)]; }) };
+    if (v instanceof Set) return { [M]: 'S', v: Array.from(v).map(function (x) { return enc(x, bl); }) };
+    if (v instanceof RegExp) return { [M]: 'r', s: v.source, f: v.flags };
+    if (Array.isArray(v)) return v.map(function (x) { return enc(x, bl); });
+    var r = {}; Object.keys(v).forEach(function (k) { r[k] = enc(v[k], bl); }); return r;
+  }
+  function needBufs(v, set) {
+    if (!v || typeof v !== 'object') return;
+    if (Array.isArray(v)) { v.forEach(function (x) { needBufs(x, set); }); return; }
+    if (v[M] === 'a' || v[M] === 'v') { set.add(v.i); return; }
+    Object.keys(v).forEach(function (k) { needBufs(v[k], set); });
+  }
+  function dec(v, B) {
+    if (!v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(function (x) { return dec(x, B); });
+    switch (v[M]) {
+      case 'u': return undefined;
+      case 'n': return Number(v.v);
+      case 'g': return BigInt(v.v);
+      case 'b': { var b = B.blob(v.i, v.t); return v.f != null && typeof File !== 'undefined' ? new File([b], v.f, { type: v.t, lastModified: v.m }) : b; }
+      case 'a': return B.buf[v.i].slice(0);
+      case 'v': { var C = self[v.k] || Uint8Array, ab = B.buf[v.i].slice(0); return v.k === 'DataView' ? new DataView(ab) : new C(ab); }
+      case 'd': return new Date(v.v);
+      case 'M': return new Map(v.v.map(function (e) { return [dec(e[0], B), dec(e[1], B)]; }));
+      case 'S': return new Set(v.v.map(function (x) { return dec(x, B); }));
+      case 'r': return new RegExp(v.s, v.f);
+    }
+    var r = {}; Object.keys(v).forEach(function (k) { r[k] = dec(v[k], B); }); return r;
+  }
+
+  /* ---------- IndexedDB ---------- */
+  function openExisting(name) { // открывает базу, только если она уже есть (не создаёт пустую)
+    return new Promise(function (ok, no) {
+      var created = false, r;
+      try { r = indexedDB.open(name); } catch (e) { ok(null); return; }
+      r.onupgradeneeded = function (e) { if (e.oldVersion === 0) { created = true; try { r.transaction.abort(); } catch (x) {} } };
+      r.onsuccess = function () { ok(r.result); };
+      r.onerror = function (e) { if (created) { if (e && e.preventDefault) e.preventDefault(); ok(null); } else no(r.error); };
+    });
+  }
+  function inGroup(cfg, store, excluded) {
+    return (cfg.groups || []).some(function (g) { return excluded.indexOf(g.label) >= 0 && g.stores.indexOf(store) >= 0; });
+  }
+  function dumpStore(db, name, bl, stats) {
+    return new Promise(function (ok, no) {
+      var tx = db.transaction(name, 'readonly'), os = tx.objectStore(name);
+      var s = { name: name, keyPath: os.keyPath, ai: !!os.autoIncrement, ix: [], recs: [] };
+      for (var i = 0; i < os.indexNames.length; i++) { var x = os.index(os.indexNames[i]); s.ix.push({ name: x.name, keyPath: x.keyPath, unique: x.unique, multi: x.multiEntry }); }
+      var before = bl.length;
+      var c = os.openCursor();
+      c.onsuccess = function () {
+        var cur = c.result; if (!cur) return;
+        s.recs.push(s.keyPath == null ? [enc(cur.primaryKey, bl), enc(cur.value, bl)] : [null, enc(cur.value, bl)]);
+        cur.continue();
+      };
+      tx.oncomplete = function () { stats.records += s.recs.length; stats.files += bl.length - before; ok(s); };
+      tx.onerror = function () { no(tx.error); };
+    });
+  }
+  /* размеры групп (аудиокниги, видео), чтобы предложить их не включать */
+  async function groupSizes(cfg) {
+    var out = {};
+    for (var g of (cfg.groups || [])) {
+      var bytes = 0, n = 0;
+      for (var dn of cfg.dbs) {
+        var db = await openExisting(dn); if (!db) continue;
+        for (var st of g.stores) {
+          if (!db.objectStoreNames.contains(st)) continue;
+          var bl = [], s = await dumpStore(db, st, bl, { records: 0, files: 0 });
+          n += s.recs.length; bl.forEach(function (b) { bytes += b.size; });
+        }
+        db.close();
+      }
+      if (n) out[g.label] = { bytes: bytes, records: n };
+    }
+    return out;
+  }
+
+  /* ---------- localStorage этого приложения ---------- */
+  function ownKey(cfg, k) {
+    return (cfg.ls.keys || []).indexOf(k) >= 0 || (cfg.ls.prefixes || []).some(function (p) { return k.indexOf(p) === 0; });
+  }
+  function lsKeys(cfg) {
+    var out = [];
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && ownKey(cfg, k)) out.push(k); } } catch (e) {}
+    return out;
+  }
+
+  /* ---------- сбор всех данных приложения в один файл ---------- */
+  async function dump(cfg, excluded, onProg) {
+    excluded = excluded || [];
+    var bl = [], stats = { records: 0, files: 0, bytes: 0, ls: 0 };
+    var head = { magic: 'EKBAK1', app: cfg.id, title: cfg.title, date: new Date().toISOString(), from: location.origin + location.pathname, ls: {}, dbs: [], excluded: excluded };
+    lsKeys(cfg).forEach(function (k) { head.ls[k] = localStorage.getItem(k); stats.ls++; });
+    for (var dn of cfg.dbs) {
+      var db = await openExisting(dn); if (!db) continue;
+      var d = { name: dn, version: db.version, stores: [] };
+      var names = Array.prototype.slice.call(db.objectStoreNames);
+      for (var i = 0; i < names.length; i++) {
+        if (onProg) onProg('Собираю данные: ' + names[i] + '…');
+        if (inGroup(cfg, names[i], excluded)) { d.stores.push({ name: names[i], skip: true, keyPath: null, ai: false, ix: [], recs: [] }); continue; }
+        d.stores.push(await dumpStore(db, names[i], bl, stats));
+      }
+      db.close(); head.dbs.push(d);
+    }
+    var off = 0;
+    head.blobs = bl.map(function (b) { var e = { o: off, n: b.size }; off += b.size; return e; });
+    stats.bytes = off;
+    head.stats = stats;
+    var hs = new TextEncoder().encode(JSON.stringify(head));
+    var len = String(hs.length); while (len.length < 12) len = '0' + len;
+    var file = new Blob([MAGIC, len, '\n', hs].concat(bl), { type: 'application/octet-stream' });
+    stats.bytes = file.size;
+    return { blob: file, stats: stats, empty: stats.records === 0 && stats.ls === 0 };
+  }
+
+  function blobText(b) { return b.text ? b.text() : new Response(b).text(); }
+  function blobBuf(b) { return b.arrayBuffer ? b.arrayBuffer() : new Response(b).arrayBuffer(); }
+
+  async function parse(file) {
+    var top = await blobText(file.slice(0, 20));
+    if (top.slice(0, 7) !== MAGIC) throw new Error('Это не файл переноса данных (.ekbak). Обычную резервную копию загрузите в самом приложении: в настройках, раздел «Резервная копия».');
+    var len = parseInt(top.slice(7, 19), 10);
+    var head = JSON.parse(await blobText(file.slice(20, 20 + len)));
+    var base = 20 + len;
+    var B = { buf: {}, blob: function (i, t) { var e = head.blobs[i]; return file.slice(base + e.o, base + e.o + e.n, t || ''); } };
+    var need = new Set(); head.dbs.forEach(function (d) { d.stores.forEach(function (s) { needBufs(s.recs, need); }); });
+    for (var i of need) B.buf[i] = await blobBuf(B.blob(i));
+    return { head: head, B: B };
+  }
+
+  async function openForRestore(d) {
+    var db = await openExisting(d.name);
+    var wanted = d.stores.filter(function (s) { return !s.skip; });
+    var missing = wanted.filter(function (s) { return !db || !db.objectStoreNames.contains(s.name); });
+    if (db && !missing.length) return db;
+    var ver = db ? Math.max(db.version + 1, d.version) : d.version;
+    if (db) db.close();
+    return new Promise(function (ok, no) {
+      var r = indexedDB.open(d.name, ver), t = null;
+      r.onupgradeneeded = function () {
+        var x = r.result;
+        wanted.forEach(function (s) {
+          if (x.objectStoreNames.contains(s.name)) return;
+          var os = x.createObjectStore(s.name, s.keyPath == null ? { autoIncrement: s.ai } : { keyPath: s.keyPath, autoIncrement: s.ai });
+          s.ix.forEach(function (ix) { os.createIndex(ix.name, ix.keyPath, { unique: ix.unique, multiEntry: ix.multi }); });
+        });
+      };
+      r.onsuccess = function () { clearTimeout(t); ok(r.result); };
+      r.onerror = function () { clearTimeout(t); no(r.error); };
+      r.onblocked = function () { t = setTimeout(function () { no(new Error('Приложение открыто в другой вкладке или окне. Закройте его там и попробуйте ещё раз.')); }, 8000); };
+    });
+  }
+  function txDone(tx) { return new Promise(function (ok, no) { tx.oncomplete = ok; tx.onerror = function () { no(tx.error); }; tx.onabort = function () { no(tx.error || new Error('Недостаточно места на устройстве')); }; }); }
+
+  /* ---------- восстановление на новом адресе ---------- */
+  async function restore(cfg, file, onProg) {
+    var p = await parse(file), head = p.head;
+    if (head.app !== cfg.id) throw new Error('Этот файл — от другого приложения («' + (head.title || head.app) + '»). Откройте его в нём.');
+    try { navigator.storage && navigator.storage.persist && await navigator.storage.persist(); } catch (e) {}
+    var stats = { records: 0, files: 0 };
+    for (var d of head.dbs) {
+      var db = await openForRestore(d);
+      for (var s of d.stores) {
+        if (s.skip) continue;
+        if (onProg) onProg('Записываю: ' + s.name + '…');
+        var tx = db.transaction(s.name, 'readwrite'); tx.objectStore(s.name).clear(); await txDone(tx);
+        for (var i = 0; i < s.recs.length; i += 200) {
+          tx = db.transaction(s.name, 'readwrite'); var os = tx.objectStore(s.name);
+          s.recs.slice(i, i + 200).forEach(function (r) { var v = dec(r[1], p.B); if (r[0] === null) os.put(v); else os.put(v, dec(r[0], p.B)); });
+          await txDone(tx);
+          if (onProg && s.recs.length > 200) onProg('Записываю: ' + s.name + ' — ' + Math.min(i + 200, s.recs.length) + ' из ' + s.recs.length);
+        }
+        stats.records += s.recs.length;
+      }
+      db.close();
+    }
+    lsKeys(cfg).forEach(function (k) { if (!(k in head.ls)) localStorage.removeItem(k); });
+    Object.keys(head.ls).forEach(function (k) { try { localStorage.setItem(k, head.ls[k]); } catch (e) {} });
+    stats.files = head.blobs.length;
+    try { localStorage.setItem('ek-mig-asked', 'done'); } catch (e) {}
+    return { stats: stats, head: head };
+  }
+
+  /* есть ли уже данные на этом адресе */
+  async function hasData(cfg) {
+    if (lsKeys(cfg).some(function (k) { return !/\.(trial|lic|rev)$/.test(k); })) return true;
+    for (var dn of cfg.dbs) {
+      var db = await openExisting(dn); if (!db) continue;
+      var names = Array.prototype.slice.call(db.objectStoreNames), n = 0;
+      for (var i = 0; i < names.length; i++) n += await new Promise(function (ok) { try { var q = db.transaction(names[i]).objectStore(names[i]).count(); q.onsuccess = function () { ok(q.result); }; q.onerror = function () { ok(0); }; } catch (e) { ok(0); } });
+      db.close(); if (n) return true;
+    }
+    return false;
+  }
+
+  /* ---------- сохранить файл: «Поделиться» (телефон) или загрузка (компьютер) ---------- */
+  async function saveFile(blob, name) {
+    var f = new File([blob], name, { type: 'application/octet-stream' });
+    var mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (mobile && navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f], title: name }); return 'shared'; }
+      catch (e) { if (e && e.name === 'AbortError') return 'cancel'; }
+    }
+    var u = URL.createObjectURL(f), a = document.createElement('a');
+    a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 120000);
+    return 'download';
+  }
+
+  var env = {
+    ios: /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+    android: /Android/i.test(navigator.userAgent),
+    standalone: navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+  };
+  function fmtSize(b) { return b < 1048576 ? Math.max(1, Math.round(b / 1024)) + ' КБ' : b < 1073741824 ? (b / 1048576).toFixed(b < 10485760 ? 1 : 0).replace('.', ',') + ' МБ' : (b / 1073741824).toFixed(1).replace('.', ',') + ' ГБ'; }
+  function plural(n, a, b, c) { var m = n % 10, h = n % 100; return n + ' ' + (m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c); }
+
+  return { dump: dump, parse: parse, restore: restore, hasData: hasData, saveFile: saveFile, groupSizes: groupSizes, env: env, fmtSize: fmtSize, plural: plural };
+})();
+</script>
+<script>
+function installHTML(url){
+  var E=EKMIG.env;
+  if(E.ios) return '<ol><li>Откройте адрес <span class="addr">'+url+'</span> в <b>Safari</b>.</li><li>Нажмите «Поделиться» <b>⬆︎</b> → <b>«На экран «Домой»»</b>.</li><li>Откройте новое приложение <b>с новой иконки</b>.</li></ol>';
+  if(E.android) return '<ol><li>Откройте адрес <span class="addr">'+url+'</span> в <b>Chrome</b>.</li><li>Меню <b>⋮</b> → <b>«Установить приложение»</b> или <b>«Добавить на главный экран»</b>.</li></ol>';
+  return '<ol><li>Откройте адрес <span class="addr">'+url+'</span> в Chrome, Edge или Safari.</li><li>Чтобы приложение было в отдельном окне: значок установки <b>⊕</b> в адресной строке (Chrome, Edge) или «Файл → Добавить в Dock» (Safari на Mac).</li></ol>';
+}
+
+var CFG={"id": "shop", "title": "Список покупок и учёт расходов", "oldUrl": "https://elenakirsbg.github.io/magazin/", "newUrl": "https://shop.elenakirsanova.com/", "ls": {"prefixes": ["mg.", "magazin_"], "keys": []}, "dbs": ["magazin_photos"], "groups": []}, NEW_ORIGIN=new URL(CFG.newUrl).origin, $=function(i){return document.getElementById(i)};
+var prepared=null, prepKey='', sending=false, done=false, savedOnce=false;
+/* старый офлайн-модуль больше не нужен: отключаем его только для этого приложения (данные не трогаем) */
+try{navigator.serviceWorker&&navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){if(r.scope===new URL('./',location.href).href)r.unregister()})})}catch(e){}
+function excluded(){return Array.prototype.slice.call(document.querySelectorAll('#groups input')).filter(function(x){return !x.checked}).map(function(x){return x.value})}
+async function getData(){var k=excluded().join('|');if(!prepared||prepKey!==k){prepared=await EKMIG.dump(CFG,excluded());prepKey=k}return prepared}
+function fname(){return 'perenos-'+CFG.id+'-'+new Date().toISOString().slice(0,10)+'.ekbak'}
+function setMsg(id,cls,html){$(id).innerHTML=html?'<div class="'+cls+'">'+html+'</div>':''}
+$('inst').innerHTML=installHTML(CFG.newUrl.replace(/^https?:\/\//,''));$('inst2').innerHTML=$('inst').innerHTML;
+if(EKMIG.env.ios){$('autoBox').classList.add('hide');$('fileBox').classList.remove('hide');
+  $('fileTxt').innerHTML='На iPhone и iPad данные переносятся через файл копии из шага 1:<ol><li>Установите новую версию (шаг 3) и откройте её с новой иконки.</li><li>Нажмите <b>«Перенести данные»</b> → <b>«Загрузить файл копии»</b> и выберите сохранённый файл.</li></ol>';
+  $('openNew').removeAttribute('target');}
+
+(async function(){
+  try{
+    var gs=await EKMIG.groupSizes(CFG), gh='';
+    Object.keys(gs).forEach(function(l){var g=gs[l];gh+='<label class="ck"><input type="checkbox" value="'+l+'"'+(g.bytes>1.5e9?'':' checked')+'><span>Перенести '+l.toLowerCase()+' ('+EKMIG.fmtSize(g.bytes)+')'+(g.bytes>1.5e9?' — очень большой объём, файл может не поместиться':'')+'</span></label>'});
+    $('groups').innerHTML=gh;
+    document.querySelectorAll('#groups input').forEach(function(x){x.onchange=function(){prepared=null;summary()}});
+    await summary();
+  }catch(e){$('found').innerHTML='<div class="err">Не удалось прочитать данные: '+(e&&e.message||e)+'</div>'}
+  if(location.hash==='#ek-send'&&window.opener){$('sendBox').classList.remove('hide');$('main').classList.add('hide');pingOpener()}
+})();
+async function summary(){
+  var d=await getData(), s=d.stats;
+  if(d.empty){$('emptyBox').classList.remove('hide');$('steps').classList.add('hide');$('found').parentNode.classList.add('hide');return}
+  $('steps').classList.remove('hide');
+  $('found').innerHTML='На этом устройстве хранятся ваши данные: <b>'+EKMIG.plural(s.records,'запись','записи','записей')+'</b>'+(s.files?', <b>'+EKMIG.plural(s.files,'файл','файла','файлов')+'</b> (фото, сканы, документы)':'')+'. Размер — '+EKMIG.fmtSize(s.bytes)+'.<br>Они не пропадут: перенесите их в новую версию за пару минут.';
+}
+$('prep').onclick=async function(){
+  var b=this;b.disabled=true;b.textContent='Готовлю копию…';
+  try{var d=await getData();b.classList.add('hide');var s=$('save');s.classList.remove('hide');s.textContent='💾 Сохранить файл копии ('+EKMIG.fmtSize(d.blob.size)+')';}
+  catch(e){b.disabled=false;b.textContent='💾 Подготовить резервную копию';setMsg('s1msg','err','Не получилось: '+(e&&e.message||e))}
+};
+$('save').onclick=async function(){
+  var d=await getData(),r=await EKMIG.saveFile(d.blob,fname());
+  if(r==='cancel'){setMsg('s1msg','warn','Файл не сохранён. Нажмите кнопку ещё раз и выберите <b>«Сохранить в Файлы»</b>.');return}
+  savedOnce=true;$('s1').classList.add('done');$('auto').disabled=false;
+  setMsg('s1msg','ok','✓ Файл <b>'+fname()+'</b> сохранён'+(r==='download'?' в «Загрузки»':'')+'. Сохранить ещё раз можно этой же кнопкой.');
+};
+function pingTo(w,ms){var t0=Date.now(),iv=setInterval(function(){if(done||Date.now()-t0>ms){clearInterval(iv);if(!done)onTimeout();return}try{w&&w.postMessage({ek:'hello',app:CFG.id},NEW_ORIGIN)}catch(e){}},700)}
+function pingOpener(){pingTo(window.opener,30000)}
+var timeoutCb=null;function onTimeout(){if(timeoutCb)timeoutCb()}
+$('auto').onclick=function(){
+  if(!savedOnce){setMsg('s2msg','warn','Сначала сохраните резервную копию (шаг 1).');return}
+  setMsg('s2msg','muted','Открываю новую версию и передаю данные… Не закрывайте это окно.');
+  var w=window.open(CFG.newUrl+'migrate.html#ek-auto','_blank');
+  timeoutCb=function(){setMsg('s2msg','warn','Автоматически не получилось — так бывает, если приложение было установлено отдельной иконкой. Ничего страшного: установите новую версию (шаг 3), откройте её, нажмите <b>«Перенести данные» → «Загрузить файл копии»</b> и выберите файл из шага 1.')};
+  pingTo(w,30000);
+};
+window.addEventListener('message',async function(e){
+  if(e.origin!==NEW_ORIGIN||!e.data||e.data.app!==CFG.id)return;
+  if(e.data.ek==='ready'){
+    if(sending||done)return;sending=true;
+    try{var d=await getData();e.source.postMessage(d.empty?{ek:'nodata',app:CFG.id}:{ek:'data',app:CFG.id,blob:d.blob},NEW_ORIGIN);$('sendMsg').textContent='Данные отправлены, новая версия их записывает…'}
+    catch(x){sending=false;$('sendMsg').innerHTML='<div class="err">Ошибка: '+(x&&x.message||x)+'</div>'}
+  }else if(e.data.ek==='done'){
+    done=true;$('s2').classList.add('done');
+    var t='✓ Данные перенесены в новую версию: '+EKMIG.plural(e.data.records||0,'запись','записи','записей')+(e.data.files?', '+EKMIG.plural(e.data.files,'файл','файла','файлов'):'')+'.';
+    setMsg('s2msg','ok',t+' Осталось установить новую версию (шаг 3).');
+    $('sendMsg').innerHTML='<div class="ok">'+t+' Это окно можно закрыть.</div>';
+  }else if(e.data.ek==='fail'){sending=false;setMsg('s2msg','err','Новая версия не смогла записать данные: '+e.data.msg+'<br>Используйте файл копии из шага 1.');$('sendMsg').innerHTML='<div class="err">'+e.data.msg+'</div>'}
+});
+</script></body></html>
