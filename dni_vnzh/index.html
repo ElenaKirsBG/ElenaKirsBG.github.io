@@ -283,9 +283,27 @@ var EKMIG = (function () {
     var o = {}; for (var key of Object.keys(v)) o[key] = await solid(v[key]); return o;
   }
 
+  function putAll(db, name, batch) {
+    var tx = db.transaction(name, 'readwrite'), os = tx.objectStore(name);
+    batch.forEach(function (x) { if (x[0] === null) os.put(x[1]); else os.put(x[1], x[0]); });
+    return txDone(tx);
+  }
+  /* тот же Blob, собранный из кусков по 4 МБ — иногда Safari принимает так */
+  async function chunked(v) {
+    if (!v || typeof v !== 'object') return v;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) {
+      var parts = [];
+      for (var o = 0; o < v.size; o += 4194304) parts.push(new Uint8Array(await blobBuf(v.slice(o, Math.min(v.size, o + 4194304)))));
+      return (typeof File !== 'undefined' && v instanceof File) ? new File(parts, v.name, { type: v.type, lastModified: v.lastModified }) : new Blob(parts, { type: v.type });
+    }
+    if (v instanceof Date || v instanceof ArrayBuffer || ArrayBuffer.isView(v) || v instanceof RegExp || v instanceof Map || v instanceof Set) return v;
+    if (Array.isArray(v)) { var a = []; for (var j = 0; j < v.length; j++) a.push(await chunked(v[j])); return a; }
+    var r = {}; for (var k of Object.keys(v)) r[k] = await chunked(v[k]); return r;
+  }
+
   async function restoreOne(cfg, file, onProg) {
     var p = await parse(file), head = p.head, main = !head.kind || head.kind === 'main';
-    var stats = { records: 0, files: head.blobs.length };
+    var stats = { records: 0, files: head.blobs.length, skipped: [] };
     for (var d of head.dbs) {
       var db = await openForRestore(d);
       for (var s of d.stores) {
@@ -297,14 +315,22 @@ var EKMIG = (function () {
         while (i < n) {
           var batch = [], bytes = 0;
           while (i < n && (batch.length < 100) && (!batch.length || bytes < 16 * 1048576)) {
-            var r = s.recs[i++], v = await solid(dec(r[1], p.B)), k = r[0] === null ? null : dec(r[0], p.B);
+            var r = s.recs[i++], v, k;
+            try { v = await solid(dec(r[1], p.B)); k = r[0] === null ? null : dec(r[0], p.B); }
+            catch (e) { throw new Error('не удалось прочитать файл копии («' + s.name + '», запись ' + i + ' из ' + n + '): ' + errText(e) + '. Если файл лежит в iCloud Drive — откройте его один раз в «Файлах», чтобы он скачался на телефон, или сохраните копию в «На iPhone».'); }
             bytes += blobBytes(v).bytes; batch.push([k, v]);
           }
-          try {
-            var tx = db.transaction(s.name, 'readwrite'), os = tx.objectStore(s.name);
-            batch.forEach(function (x) { if (x[0] === null) os.put(x[1]); else os.put(x[1], x[0]); });
-            await txDone(tx);
-          } catch (e) { throw new Error('не удалось записать «' + s.name + '» (' + errText(e) + ')'); }
+          try { await putAll(db, s.name, batch); }
+          catch (e) {
+            /* порцией не вышло — пишем по одной записи; большие файлы пробуем ещё и кусками; что Safari так и не принял — пропускаем */
+            for (var x of batch) {
+              try { await putAll(db, s.name, [x]); continue; } catch (e1) {}
+              try { await putAll(db, s.name, [[x[0], await chunked(x[1])]]); continue; } catch (e2) {
+                if (!blobBytes(x[1]).files) throw new Error('не удалось записать «' + s.name + '» (' + errText(e2) + ')');
+                stats.skipped.push({ store: s.name, bytes: blobBytes(x[1]).bytes, why: errText(e2) });
+              }
+            }
+          }
           if (onProg && n > 50) onProg(i + ' из ' + n);
         }
         stats.records += s.recs.length;
@@ -335,12 +361,12 @@ var EKMIG = (function () {
     });
     try { navigator.storage && navigator.storage.persist && await navigator.storage.persist(); } catch (e) {}
     list.sort(function (a, b) { return (a.h.part || 0) - (b.h.part || 0); });
-    var stats = { records: 0, files: 0 };
+    var stats = { records: 0, files: 0, skipped: [] };
     for (var i = 0; i < list.length; i++) {
       var pre = list.length > 1 ? 'Файл ' + (i + 1) + ' из ' + list.length + ': ' : '';
       if (onProg) onProg(pre + 'записываю…');
       var s = await restoreOne(cfg, list[i].f, function (t) { if (onProg) onProg(pre + t); });
-      stats.records += s.records; stats.files += s.files;
+      stats.records += s.records; stats.files += s.files; stats.skipped = (stats.skipped || []).concat(s.skipped || []);
     }
     try { localStorage.setItem('ek-mig-asked', 'done'); } catch (e) {}
     var main0 = mains[0] && mains[0].h, miss = 0;
@@ -404,7 +430,8 @@ function setMsg(id,cls,html){$(id).innerHTML=html?'<div class="'+cls+'">'+html+'
 $('inst').innerHTML=installHTML(CFG.newUrl.replace(/^https?:\/\//,''));$('inst2').innerHTML=$('inst').innerHTML;
 if(EKMIG.env.ios){$('autoBox').classList.add('hide');$('fileBox').classList.remove('hide');
   $('fileTxt').innerHTML='На iPhone и iPad данные переносятся через файлы копии из шага 1:<ol><li>Установите новую версию (шаг 3) и откройте её с новой иконки.</li><li>Нажмите <b>«Перенести данные»</b> → <b>«Загрузить файлы копии»</b>. В «Файлах» нажмите <b>«Выбрать»</b>, отметьте <b>все</b> сохранённые файлы копии и нажмите «Открыть».</li></ol>';
-  $('openNew').removeAttribute('target');}
+  var on=$('openNew');on.removeAttribute('href');on.removeAttribute('target');on.textContent='Скопировать новый адрес';
+  on.onclick=async function(){var a=CFG.newUrl;try{await navigator.clipboard.writeText(a);on.textContent='Скопировано ✓ — вставьте в Safari'}catch(e){prompt('Скопируйте адрес и откройте его в Safari:',a)}};}
 
 (async function(){
   try{
