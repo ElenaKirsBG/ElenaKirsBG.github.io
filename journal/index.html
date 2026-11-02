@@ -126,7 +126,7 @@ var EKMIG = (function () {
       var c = os.openCursor();
       c.onsuccess = function () { var cur = c.result; if (!cur) return; rows.push([meta.keyPath == null ? cur.primaryKey : null, cur.value]); cur.continue(); };
       tx.oncomplete = function () { ok({ meta: meta, rows: rows }); };
-      tx.onerror = function () { no(tx.error); };
+      tx.onerror = function (ev) { no(tx.error || (ev && ev.target && ev.target.error) || null); };
     });
   }
   function blobBytes(v) { var bl = []; enc(v, bl); var n = 0; bl.forEach(function (b) { n += b.size; }); return { bytes: n, files: bl.length }; }
@@ -262,7 +262,26 @@ var EKMIG = (function () {
       r.onblocked = function () { t = setTimeout(function () { no(new Error('Приложение открыто в другой вкладке или окне. Закройте его там и попробуйте ещё раз.')); }, 8000); };
     });
   }
-  function txDone(tx) { return new Promise(function (ok, no) { tx.oncomplete = ok; tx.onerror = function () { no(tx.error); }; tx.onabort = function () { no(tx.error || new Error('Недостаточно места на устройстве')); }; }); }
+  function txDone(tx) { return new Promise(function (ok, no) { tx.oncomplete = ok; tx.onerror = function (ev) { no(tx.error || (ev && ev.target && ev.target.error) || null); }; tx.onabort = function () { no(tx.error || new Error('Недостаточно места на устройстве')); }; }); }
+
+  function errText(e) {
+    if (!e) return 'хранилище браузера отказало без пояснений — чаще всего не хватает свободного места на устройстве';
+    if (e.name === 'QuotaExceededError') return 'не хватает места на устройстве';
+    return (e.name ? e.name + ': ' : '') + (e.message || String(e));
+  }
+  /* заменяет Blob/File, которые ссылаются на файл, их копиями в памяти */
+  async function solid(v) {
+    if (!v || typeof v !== 'object') return v;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) {
+      var buf = await blobBuf(v);
+      return (typeof File !== 'undefined' && v instanceof File) ? new File([buf], v.name, { type: v.type, lastModified: v.lastModified }) : new Blob([buf], { type: v.type });
+    }
+    if (v instanceof Date || v instanceof ArrayBuffer || ArrayBuffer.isView(v) || v instanceof RegExp) return v;
+    if (v instanceof Map) { var m = new Map(); for (var e of v) m.set(e[0], await solid(e[1])); return m; }
+    if (v instanceof Set) return v;
+    if (Array.isArray(v)) { var a = []; for (var j = 0; j < v.length; j++) a.push(await solid(v[j])); return a; }
+    var o = {}; for (var key of Object.keys(v)) o[key] = await solid(v[key]); return o;
+  }
 
   async function restoreOne(cfg, file, onProg) {
     var p = await parse(file), head = p.head, main = !head.kind || head.kind === 'main';
@@ -272,11 +291,21 @@ var EKMIG = (function () {
       for (var s of d.stores) {
         if (s.skip) continue;
         if (main) { var tx0 = db.transaction(s.name, 'readwrite'); tx0.objectStore(s.name).clear(); await txDone(tx0); }
-        for (var i = 0; i < s.recs.length; i += 100) {
-          var tx = db.transaction(s.name, 'readwrite'), os = tx.objectStore(s.name);
-          s.recs.slice(i, i + 100).forEach(function (r) { var v = dec(r[1], p.B); if (r[0] === null) os.put(v); else os.put(v, dec(r[0], p.B)); });
-          await txDone(tx);
-          if (onProg && s.recs.length > 100) onProg(Math.min(i + 100, s.recs.length) + ' из ' + s.recs.length);
+        /* Safari не сохраняет в базу куски выбранного файла (File.slice) — копируем каждый в память.
+           Пишем порциями до ~16 МБ, чтобы не переполнить память телефона. */
+        var i = 0, n = s.recs.length;
+        while (i < n) {
+          var batch = [], bytes = 0;
+          while (i < n && (batch.length < 100) && (!batch.length || bytes < 16 * 1048576)) {
+            var r = s.recs[i++], v = await solid(dec(r[1], p.B)), k = r[0] === null ? null : dec(r[0], p.B);
+            bytes += blobBytes(v).bytes; batch.push([k, v]);
+          }
+          try {
+            var tx = db.transaction(s.name, 'readwrite'), os = tx.objectStore(s.name);
+            batch.forEach(function (x) { if (x[0] === null) os.put(x[1]); else os.put(x[1], x[0]); });
+            await txDone(tx);
+          } catch (e) { throw new Error('не удалось записать «' + s.name + '» (' + errText(e) + ')'); }
+          if (onProg && n > 50) onProg(i + ' из ' + n);
         }
         stats.records += s.recs.length;
       }
